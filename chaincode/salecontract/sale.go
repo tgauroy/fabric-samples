@@ -19,7 +19,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"strconv"
 	"github.com/hyperledger/fabric/core/chaincode/shim"
 	pb "github.com/hyperledger/fabric/protos/peer"
 )
@@ -28,6 +27,7 @@ var logger = shim.NewLogger("salecontract")
 
 // SaleContract example simple Chaincode implementation
 type SaleContract struct {
+	Contract        string
 	Buyer           string
 	Seller          string
 	DataHash        string
@@ -65,7 +65,9 @@ func (t *SaleContract) Init(stub shim.ChaincodeStubInterface) pb.Response {
 		return shim.Error("Expecting seller for a sale contract")
 	}
 
-	contract.Status = PROPOSED
+	if contract.Status != PROPOSED {
+		return shim.Error("Only status proposed to init new contract")
+	}
 
 	logger.Info("buyer = %d, seller = %d,dataHash = %d, status = %d\n", contract.Buyer, contract.Seller, contract.DataHash, contract.Status)
 
@@ -75,12 +77,7 @@ func (t *SaleContract) Init(stub shim.ChaincodeStubInterface) pb.Response {
 		return shim.Error(err.Error())
 	}
 
-	err = stub.PutState(contract.Buyer, contractJson)
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-
-	err = stub.PutState(contract.Seller, contractJson)
+	err = stub.PutState(contract.Contract, contractJson)
 	if err != nil {
 		return shim.Error(err.Error())
 	}
@@ -96,6 +93,7 @@ func (t *SaleContract) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	function, args := stub.GetFunctionAndParameters()
 
 	if function == "accept" {
+		logger.Info("Accept invoked")
 		// Deletes an entity from its state
 		return t.accept(stub, args)
 	}
@@ -110,61 +108,50 @@ func (t *SaleContract) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 }
 
 func (t *SaleContract) accept(stub shim.ChaincodeStubInterface, args []string) pb.Response {
-	// must be an invoke
-	var buyer, seller string // Entities
-	var Aval, Bval int       // Asset holdings
-	var X int                // Transaction value
+
 	var err error
 
-	if len(args) != 3 {
-		return shim.Error("Incorrect number of arguments. Expecting 4, function followed by 2 names and 1 value")
+	if len(args) != 1 {
+		return shim.Error("Incorrect number of arguments. Expecting 1")
 	}
 
-	buyer = args[0]
-	seller = args[1]
+	var contractId = args[0]
 
 	// Get the state from the ledger
-	// TODO: will be nice to have a GetAllState call to ledger
-	Avalbytes, err := stub.GetState(buyer)
+	contractbytes, err := stub.GetState(contractId)
 	if err != nil {
 		return shim.Error("Failed to get state of contract")
 	}
-	if Avalbytes == nil {
-		return shim.Error("Entity not found")
+	if contractbytes == nil {
+		return shim.Error("Contract not found")
 	}
-	Aval, _ = strconv.Atoi(string(Avalbytes))
 
-	Bvalbytes, err := stub.GetState(seller)
+	var contract SaleContract
+	err = json.Unmarshal([]byte(contractbytes), &contract)
 	if err != nil {
-		return shim.Error("Failed to get state of contract")
-	}
-	if Bvalbytes == nil {
-		return shim.Error("Entity not found")
+		logger.Error("Could not fetch sale contract from ledger", err)
+		return shim.Error("Cannot unmarshal contract values")
 	}
 
-	Bval, _ = strconv.Atoi(string(Bvalbytes))
-
-	// Perform the execution
-	X, err = strconv.Atoi(args[2])
-	if err != nil {
-		return shim.Error("Invalid transaction amount, expecting a integer value")
+	if contract.Status != PROPOSED {
+		logger.Error("Could accept a contract with a status different thant PROPOSED", err)
+		return shim.Error("Could accept a contract with a status different thant PROPOSED")
 	}
-	Aval = Aval - X
-	Bval = Bval + X
-	logger.Infof("Aval = %d, Bval = %d\n", Aval, Bval)
+
+	contract.Status = ACCEPTED
 
 	// Write the state back to the ledger
-	err = stub.PutState(buyer, []byte(strconv.Itoa(Aval)))
+	var contractToSave, marsErr = json.Marshal(contract)
+	if marsErr != nil {
+		return shim.Error(err.Error())
+	}
+
+	err = stub.PutState(contract.Contract, []byte(contractToSave))
 	if err != nil {
 		return shim.Error(err.Error())
 	}
 
-	err = stub.PutState(seller, []byte(strconv.Itoa(Bval)))
-	if err != nil {
-		return shim.Error(err.Error())
-	}
-
-	return shim.Success(nil)
+	return shim.Success(contractToSave)
 }
 
 func main() {
