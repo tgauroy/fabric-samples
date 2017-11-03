@@ -60,8 +60,20 @@ func checkStateNotExist(t *testing.T, stub *shim.MockStub, name string, value st
 
 }
 
-func checkAccept(t *testing.T, stub *shim.MockStub, name string) {
-	res := stub.MockInvoke("1", [][]byte{[]byte("accept"), []byte(name)})
+func checkAcceptFailed(t *testing.T, stub *shim.MockStub, name string, actor string) {
+	res := stub.MockInvoke("1", [][]byte{[]byte("accept"), []byte(name), []byte(actor)})
+	if res.Status == shim.OK {
+		fmt.Println("Accept", name, "error accept should failed", string(res.Message))
+		t.FailNow()
+	}
+	if res.Payload != nil {
+		fmt.Println("Accept", name, "Payload is not null")
+		t.FailNow()
+	}
+}
+
+func checkAccept(t *testing.T, stub *shim.MockStub, name string, actor string) {
+	res := stub.MockInvoke("1", [][]byte{[]byte("accept"), []byte(name), []byte(actor)})
 	if res.Status != shim.OK {
 		fmt.Println("Accept", name, "failed", string(res.Message))
 		t.FailNow()
@@ -79,6 +91,42 @@ func checkAccept(t *testing.T, stub *shim.MockStub, name string) {
 	}
 
 	if contract.Status != ACCEPTED {
+		fmt.Println("Contract status value", name, "was not ACCEPTED as expected")
+		t.FailNow()
+	}
+}
+
+func checkRejectFailed(t *testing.T, stub *shim.MockStub, name string, actor string) {
+	res := stub.MockInvoke("1", [][]byte{[]byte("reject"), []byte(name), []byte(actor)})
+	if res.Status == shim.OK {
+		fmt.Println("Reject", name, "error accept should failed", string(res.Message))
+		t.FailNow()
+	}
+	if res.Payload != nil {
+		fmt.Println("Reject", name, "Payload is not null")
+		t.FailNow()
+	}
+}
+
+func checkReject(t *testing.T, stub *shim.MockStub, name string, actor string) {
+	res := stub.MockInvoke("1", [][]byte{[]byte("reject"), []byte(name), []byte(actor)})
+	if res.Status != shim.OK {
+		fmt.Println("Reject", name, "failed", string(res.Message))
+		t.FailNow()
+	}
+	if res.Payload == nil {
+		fmt.Println("Reject", name, "failed to get contract")
+		t.FailNow()
+	}
+
+	var contract SaleContract
+	var err = json.Unmarshal([]byte(res.Payload), &contract)
+	if err != nil {
+		logger.Error("Could not fetch sale contract from payload", err)
+		t.FailNow()
+	}
+
+	if contract.Status != REJECTED {
 		fmt.Println("Contract status value", name, "was not ACCEPTED as expected")
 		t.FailNow()
 	}
@@ -160,7 +208,7 @@ func Test_Buyer_accept_contract_and_status_accepted(t *testing.T) {
 
 	checkInit(t, stub, [][]byte{[]byte("init"), totoStr})
 	checkState(t, stub, "SALE-003", string(totoStr))
-	checkAccept(t, stub, "SALE-003")
+	checkAccept(t, stub, "SALE-003", "Acheteur")
 
 	toto.Status = ACCEPTED
 
@@ -173,3 +221,94 @@ func Test_Buyer_accept_contract_and_status_accepted(t *testing.T) {
 	checkState(t, stub, "SALE-003", string(totoStr))
 
 }
+
+func Test_Seller_cannot_accept_contract(t *testing.T) {
+	scc := new(SaleContract)
+	stub := shim.NewMockStub("ex02", scc)
+	toto := &SaleContract{
+		Contract:        "SALE-004",
+		Buyer:           "Acheteur",
+		Seller:          "Vendeur",
+		DataHash:        "Hash",
+		SignatureBuyer:  "sgn1",
+		SignatureSeller: "sgn2",
+		Status:          PROPOSED,
+	}
+	var totoStr, err = json.Marshal(toto)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	logger.Info(string(totoStr))
+
+	checkInit(t, stub, [][]byte{[]byte("init"), totoStr})
+	checkAcceptFailed(t, stub, "SALE-004", "Vendeur")
+	checkState(t, stub, "SALE-004", string(totoStr))
+
+}
+
+func Test_Buyer_reject_contract_and_status_accepted(t *testing.T) {
+	scc := new(SaleContract)
+	stub := shim.NewMockStub("ex02", scc)
+	toto := &SaleContract{
+		Contract:        "SALE-005",
+		Buyer:           "Acheteur",
+		Seller:          "Vendeur",
+		DataHash:        "Hash",
+		SignatureBuyer:  "sgn1",
+		SignatureSeller: "sgn2",
+		Status:          PROPOSED,
+	}
+	var totoStr, err = json.Marshal(toto)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	logger.Info(string(totoStr))
+
+	checkInit(t, stub, [][]byte{[]byte("init"), totoStr})
+	checkState(t, stub, "SALE-005", string(totoStr))
+	checkReject(t, stub, "SALE-005", "Acheteur")
+
+	toto.Status = REJECTED
+
+	totoStr, err = json.Marshal(toto)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	checkState(t, stub, "SALE-005", string(totoStr))
+
+}
+
+func Test_Seller_cannot_reject_contract(t *testing.T) {
+	scc := new(SaleContract)
+	stub := shim.NewMockStub("ex02", scc)
+	toto := &SaleContract{
+		Contract:        "SALE-006",
+		Buyer:           "Acheteur",
+		Seller:          "Vendeur",
+		DataHash:        "Hash",
+		SignatureBuyer:  "sgn1",
+		SignatureSeller: "sgn2",
+		Status:          PROPOSED,
+	}
+	var totoStr, err = json.Marshal(toto)
+	if err != nil {
+		logger.Error(err)
+		return
+	}
+
+	logger.Info(string(totoStr))
+
+	checkInit(t, stub, [][]byte{[]byte("init"), totoStr})
+	checkRejectFailed(t, stub, "SALE-006", "Vendeur")
+	checkState(t, stub, "SALE-006", string(totoStr))
+
+}
+
+
+

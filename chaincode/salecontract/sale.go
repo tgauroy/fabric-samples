@@ -97,11 +97,11 @@ func (t *SaleContract) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 		// Deletes an entity from its state
 		return t.accept(stub, args)
 	}
-	//
-	//if function == "reject" {
-	//	// queries an entity state
-	//	return t.reject(stub, args)
-	//}
+
+	if function == "reject" {
+		// queries an entity state
+		return t.reject(stub, args)
+	}
 
 	logger.Errorf("Unknown action, check the first argument, must be one of 'accept', 'reject'. But got: %v", args[0])
 	return shim.Error(fmt.Sprintf("Unknown action, check the first argument, must be one of 'accept', 'delete'. But got: %v", args[0]))
@@ -111,11 +111,12 @@ func (t *SaleContract) accept(stub shim.ChaincodeStubInterface, args []string) p
 
 	var err error
 
-	if len(args) != 1 {
-		return shim.Error("Incorrect number of arguments. Expecting 1")
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
 	}
 
 	var contractId = args[0]
+	var validator = args[1]
 
 	// Get the state from the ledger
 	contractbytes, err := stub.GetState(contractId)
@@ -134,11 +135,70 @@ func (t *SaleContract) accept(stub shim.ChaincodeStubInterface, args []string) p
 	}
 
 	if contract.Status != PROPOSED {
-		logger.Error("Could accept a contract with a status different thant PROPOSED", err)
+		logger.Error("Could accept a contract with a status different than PROPOSED")
 		return shim.Error("Could accept a contract with a status different thant PROPOSED")
 	}
 
+	if (validator != contract.Buyer) {
+		logger.Error("Only Buyer can accept contract")
+		return shim.Error("Only Buyer can accept contract")
+	}
+
 	contract.Status = ACCEPTED
+
+	// Write the state back to the ledger
+	var contractToSave, marsErr = json.Marshal(contract)
+	if marsErr != nil {
+		return shim.Error(err.Error())
+	}
+
+	err = stub.PutState(contract.Contract, []byte(contractToSave))
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+
+	return shim.Success(contractToSave)
+}
+
+
+func (t *SaleContract) reject(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+
+	var err error
+
+	if len(args) != 2 {
+		return shim.Error("Incorrect number of arguments. Expecting 2")
+	}
+
+	var contractId = args[0]
+	var validator = args[1]
+
+	// Get the state from the ledger
+	contractbytes, err := stub.GetState(contractId)
+	if err != nil {
+		return shim.Error("Failed to get state of contract")
+	}
+	if contractbytes == nil {
+		return shim.Error("Contract not found")
+	}
+
+	var contract SaleContract
+	err = json.Unmarshal([]byte(contractbytes), &contract)
+	if err != nil {
+		logger.Error("Could not fetch sale contract from ledger", err)
+		return shim.Error("Cannot unmarshal contract values")
+	}
+
+	if contract.Status != PROPOSED {
+		logger.Error("Could accept a contract with a status different than PROPOSED")
+		return shim.Error("Could accept a contract with a status different thant PROPOSED")
+	}
+
+	if (validator != contract.Buyer) {
+		logger.Error("Only Buyer can reject contract")
+		return shim.Error("Only Buyer can reject contract")
+	}
+
+	contract.Status = REJECTED
 
 	// Write the state back to the ledger
 	var contractToSave, marsErr = json.Marshal(contract)
